@@ -355,11 +355,43 @@ class SimpleHotkeySettings:
             self.restart_app()
 
     def restart_app(self):
-        keyboard.unhook_all()
-        if self.parent:
-            self.parent.destroy()
-        subprocess.Popen([sys.executable] + sys.argv)
-        sys.exit()
+        try:
+            keyboard.unhook_all()
+
+            if hasattr(self, 'setting_window') and self.setting_window and self.setting_window.winfo_exists():
+                self.setting_window.destroy()
+            if hasattr(self, 'window') and self.window and self.window.winfo_exists():
+                self.window.destroy()
+            if hasattr(self, 'parent') and self.parent and self.parent.winfo_exists():
+                self.parent.destroy()
+
+            cmd_args = []
+            if hasattr(sys, 'frozen') or '__compiled__' in globals():
+                current_exe = os.path.abspath(sys.argv[0])
+                cmd_args = [current_exe] + sys.argv[1:]
+            else:
+                cmd_args = [sys.executable, os.path.abspath(sys.argv[0])] + sys.argv[1:]
+
+            if sys.platform == "win32":
+                ctypes.windll.shell32.ShellExecuteW(
+                    None,
+                    "runas",
+                    cmd_args[0],
+                    " ".join(f'"{arg}"' for arg in cmd_args[1:]),
+                    os.getcwd(),
+                    0
+                )
+            else:
+                subprocess.Popen(cmd_args, cwd=os.getcwd())
+
+            sys.exit(0)
+
+        except Exception as e:
+            try:
+                messagebox.showerror("重启失败", f"无法自动重启，请手动打开程序\n错误：{str(e)}")
+            except:
+                pass
+            sys.exit(1)
 
 
 class AutoClickerApp(tk.Tk):
