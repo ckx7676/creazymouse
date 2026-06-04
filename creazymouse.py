@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import tkinter as tk
 from tkinter import LabelFrame, Radiobutton, Entry, Label, messagebox
-from pynput.mouse import Button, Controller
 import keyboard
 import winsound
 import ctypes
@@ -12,6 +11,7 @@ import math
 import configparser
 import os
 import subprocess
+import time
 
 
 def is_admin():
@@ -31,17 +31,41 @@ def run_as_admin():
 if not is_admin():
     run_as_admin()
 
+user32 = ctypes.windll.user32
+
+try:
+    user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+except:
+    try:
+        user32.SetProcessDpiAwareness(2)
+    except:
+        try:
+            user32.SetProcessDPIAware()
+        except:
+            pass
+
 # 默认参数配置
-CFG_HIGH_BASE = 0.02
+INPUT_MOUSE = 0
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_ABSOLUTE = 0x8000
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_WHEEL = 0x0800
+WHEEL_DELTA = 120
+CLICK_DURING_RANGE = (0.02, 0.04)
+
+CFG_HIGH_BASE = 0.01
 CFG_HIGH_RAND = 0.01
 CFG_LOW_BASE = 1.0
 CFG_LOW_RAND = 0.1
-CFG_CUST_BASE_DEFAULT = 0.08
+CFG_CUST_BASE_DEFAULT = 0.05
 CFG_CUST_RAND_DEFAULT = 0.02
-CFG_OFFSET_PX_DEFAULT = 7
+CFG_OFFSET_PX_DEFAULT = 5
 MAX_OFFSET_PX = 30
 MIN_BASE_INTERVAL = 0.01
-MIN_RAND_FLOAT = 0
+MIN_RAND_FLOAT = 0.01
 GAUSSIAN_SIGMA_FACTOR = 0.5
 
 DEFAULT_START_HOT_KEY = 'alt+1'
@@ -56,6 +80,98 @@ def resource_path(relative_path):
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
+
+
+class Button:
+    left = 1
+    right = 2
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_long),
+        ("dy", ctypes.c_long),
+        ("mouseData", ctypes.c_ulong),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+
+class INPUT(ctypes.Structure):
+    _fields_ = [
+        ("type", ctypes.c_ulong),
+        ("mi", MOUSEINPUT),
+    ]
+
+
+class POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class Controller:
+    def __init__(self):
+        pass
+
+    def _send(self, flags, dx=0, dy=0, data=0):
+        mi = MOUSEINPUT(
+            dx,
+            dy,
+            data,
+            flags,
+            0,
+            user32.GetMessageExtraInfo()
+        )
+        inp = INPUT(INPUT_MOUSE, mi)
+
+        if user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp)) != 1:
+            raise RuntimeError("SendInput failed")
+
+    def click(self, button):
+        if button == Button.left:
+            down = MOUSEEVENTF_LEFTDOWN
+            up = MOUSEEVENTF_LEFTUP
+        elif button == Button.right:
+            down = MOUSEEVENTF_RIGHTDOWN
+            up = MOUSEEVENTF_RIGHTUP
+        else:
+            raise ValueError("Unsupported button")
+
+        self._send(down)
+        time.sleep(random.uniform(*CLICK_DURING_RANGE))
+        self._send(up)
+
+    def scroll(self, dx, dy):
+        if dy != 0:
+            self._send(
+                MOUSEEVENTF_WHEEL,
+                data=int(WHEEL_DELTA * dy)
+            )
+
+    @property
+    def position(self):
+        pt = POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        return (pt.x, pt.y)
+
+    @position.setter
+    def position(self, pos):
+        x, y = pos
+        screen_width = user32.GetSystemMetrics(0)
+        screen_height = user32.GetSystemMetrics(1)
+        x = max(0, min(x, screen_width - 1))
+        y = max(0, min(y, screen_height - 1))
+        abs_x = int(x * 65535 / (screen_width - 1))
+        abs_y = int(y * 65535 / (screen_height - 1))
+        self._send(
+            MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+            abs_x,
+            abs_y
+        )
+
+    def move(self, dx, dy):
+        x, y = self.position
+        self.position = (x + dx, y + dy)
 
 
 class SimpleHotkeySettings:
@@ -686,7 +802,7 @@ class AutoClickerApp(tk.Tk):
                 self.mouse_ctrl.scroll(0, -1)
 
             if use_offset:
-                self.mouse_ctrl.position = (org_x, org_y)
+                self.mouse_ctrl.move(-dx, -dy)
 
             sleep_t = base_t + random.uniform(0, rand_t)
             if stop_event.wait(timeout=sleep_t):
